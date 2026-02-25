@@ -233,10 +233,9 @@ next_predicted_state = np.argmax(probs_for_next_state)
 is_bullish = 1 if next_predicted_state in bull_regimes else 0
 
 # leaving this for now so that I have some idea of what's going on
-
 print("\nMeans and variances of each state:")
 for i in range(model.n_components):
-    print(f"State {i}{"(Bullish)" if i in bull_regimes else ""}:")
+    print(f"State {i}{" (Bullish)" if i in bull_regimes else ""}:")
     print(f"  Mean Returns: {model.means_[i][0]:.5f}")
     print(f"  Mean Volatility: {model.means_[i][1]:.5f}")
 

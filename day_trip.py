@@ -243,20 +243,20 @@ for i in range(model.n_components):
 # table of most recent dates and states
 end_date_range = 5
 print(f"\nMarket: {data_set}")
-print("|--- Date ---|--- State ---|---Bull?---|")
+print("|--- Date ---|-- State --|---Bull?---|")
 for i in range(0, end_date_range):
     # reverse index to go in order of dates, from -10 to -1
     index = end_date_range - i
     print_date = new_results.index[-index].strftime("%Y-%m-%d")
     print_state = new_results['State'].iloc[-index]
-    print(f"| {print_date} |      {print_state}      |    {"Yes" if print_state in bull_regimes else "No "}   |") # formatting
-print("|------------|-------------|")
+    print(f"| {print_date} |     {print_state}     |    {"Yes" if print_state in bull_regimes else "No "}    |") # formatting
+print("|------------|-----------|-----------|")
 
 print(f"Today's state: {most_recent_state}")
-print(f"Probabilities for tomorrow: {probs_for_next_state}")
+print("Probabilities for tomorrow:")
 
 for i in range(0, probs_for_next_state.size):
-    print(f"State {i}: {probs_for_next_state[i]:.0%}")
+    print(f"  State {i}: {probs_for_next_state[i]:.2%}")
 
 print(f"Predicted state for {data_set} tomorrow: {next_predicted_state}")
 print(f"Action for {data_set} Tomorrow: {'🚀 BUY BUY BUY' if is_bullish else '💰 SELL SELL SELL'}")

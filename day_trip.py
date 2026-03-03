@@ -1,9 +1,9 @@
 ## day_trip.py - day tripper
+# use this to get the day's market regime
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import matplotlib.pyplot as plt
 from hmmlearn import hmm
 from datetime import datetime
 
@@ -11,15 +11,19 @@ from datetime import datetime
 data_set = "SPY"
 # switch to taking this as an input in a function
 
-# same here - eventually take start date as function input
-# will need to determine end date programmatically
-# 2021-01-01 to 2025-01-01 is 252*4=1008 days
-# end_date = start_date + interval * 1008
 start_date = "2020-01-01"
 end_date = "2024-01-01"
 
-# same here - eventually take start date as function input
+# for day trip, interval should always be 1 day
 interval = "1d"
+
+# TODO: take start date as function input
+# end_date_count = 1000
+
+# start_datetime = datetime.date(start_date)
+
+# end_date = start_date + datetime.timedelta(days=end_date_count)
+# print(end_date)
 
 # get data
 data = yf.download(data_set, start=start_date, end=end_date, interval=interval)
@@ -143,7 +147,7 @@ strategy_final_test = test_data['Cumulative_Strategy'].iloc[-1]
 last_date = test_data.index[-1].strftime("%Y-%m-%d")
 most_recent_date = datetime.today().strftime("%Y-%m-%d")
 
-new_data = yf.download(data_set, start=last_date, end=most_recent_date)
+new_data = yf.download(data_set, start=last_date)
 
 # flatten MultiIndex columns if they exist
 # if isinstance(new_data.columns, pd.MultiIndex):

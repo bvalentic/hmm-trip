@@ -30,14 +30,14 @@ data = yf.download(data_set, start=start_date, end=end_date, interval=interval)
 
 # separate dataset into training and testing data
 train_size = int(len(data) * 0.70)
-train_data = data[:train_size]
-test_data = data[train_size:]
+train_data = data[:train_size].copy()
+test_data = data[train_size:].copy()
 # get the initial start and end dates of testing
 test_start = test_data['Close'].iloc[0]
 test_end = test_data['Close'].iloc[-1]
 
-# we need features that define the "state" of the market
-# common choices are returns and volatility
+# features that define the "state" of the market
+# using returns and volatility:
 train_data['Returns'] = np.log(train_data['Close'] / train_data['Close'].shift(1))
 train_data['Range'] = (train_data['High'] - train_data['Low']) / train_data['Close']
 train_data.dropna(inplace=True)
@@ -46,14 +46,14 @@ train_data.dropna(inplace=True)
 X = train_data[['Returns', 'Range']].values
 
 # number of market regimes
-n_components = 4
+n_components = 2
 # "full" allows features to correlate within a state
 # "diag" allows features to be modeled w/o diagonal correlation
 covariance_type = "diag"
 # number of model iterations
 n_iter = 100
 # add min_covar to prevent "non-positive definite" error
-min_covar=1e-3
+min_covar=1e-4
 # use Viterbi algorithm
 algorithm = "viterbi"
 # "" keeps set variables
@@ -79,8 +79,7 @@ train_data['State'] = hidden_states
 
 positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
 
-
-# try volatility check
+# use volatility check
 volatility_threshold = 0.070
 low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
 
@@ -91,12 +90,10 @@ for i in positive_return_regimes:
 
 train_bull_state_list = []
 # create a signal: 1 if in bullish state, 0 otherwise
-# for now, grabbing any state with positive mean returns (not factoring in volatility)
 train_data['Signal'] = np.where(train_data['State'].isin(bull_regimes), 1, 0)
 
-
-# calculate returns on HMM
-# We shift signal by 1 because we trade at the close based on today's state for tomorrow
+# calculate returns on HMM and score against benchmark
+# the "strategy" is to trade at the close based on today's state for tomorrow
 train_data['Strategy_Returns'] = train_data['Signal'].shift(1) * train_data['Returns']
 
 # calculate buy & hold returns
@@ -147,7 +144,11 @@ strategy_final_test = test_data['Cumulative_Strategy'].iloc[-1]
 last_date = test_data.index[-1].strftime("%Y-%m-%d")
 most_recent_date = datetime.today().strftime("%Y-%m-%d")
 
-new_data = yf.download(data_set, start=last_date)
+new_data = yf.download(data_set, start=last_date) #end=most_recent_date?
+
+# we'll do a 1-year rolling window for the day-trip
+# 252 trading days in a year
+window_size = 252 
 
 # flatten MultiIndex columns if they exist
 # if isinstance(new_data.columns, pd.MultiIndex):
@@ -159,7 +160,7 @@ new_data = yf.download(data_set, start=last_date)
 # drop the old 'Returns' and 'Range' columns from the tail of test_data 
 # so they don't create NaN columns in the new_data section during concat
 # then concatenate and remove duplicates (the overlapping last_date)
-buffer_data = test_data.tail(252)[['Open', 'High', 'Low', 'Close', 'Volume']]
+buffer_data = test_data.tail(window_size)[['Open', 'High', 'Low', 'Close', 'Volume']]
 full_df = pd.concat([buffer_data, new_data])
 full_df = full_df[~full_df.index.duplicated(keep='last')]
 
@@ -167,9 +168,6 @@ full_df['Returns'] = np.log(full_df['Close'] / full_df['Close'].shift(1))
 full_df['Range'] = (full_df['High'] - full_df['Low']) / full_df['Close']
 full_df.dropna(inplace=True)
 
-# we'll do a 1-year rolling window
-# 252 trading days in a year
-window_size = 252 
 signals = []
 states = []
 exception_list = []
@@ -180,9 +178,16 @@ for i in range(window_size, len(full_df)):
     
     try:
         model.fit(X_train)
-        bull_indices = np.where(model.means_[:, 0] > 0)[0]
         current_state = model.predict(current_features)[0]
-        signal = 1 if current_state in bull_indices else 0
+
+        positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
+        low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
+        bull_regimes = []
+        for i in positive_return_regimes:
+            if i in low_volatility_regimes:
+                bull_regimes.append(i)
+
+        signal = 1 if current_state in bull_regimes else 0
 
         signals.append(signal)
         states.append(current_state)
@@ -212,6 +217,7 @@ new_results = full_results[window_size:]
 new_results['Signal'] = signals
 new_results['State'] = states
 
+# TODO: keep or remove? These aren't being used, but could be to do a final test
 new_results['Strategy_Returns'] = new_results['Signal'].shift(1) * new_results['Returns']
 new_results['Cumulative_Market'] = np.exp(new_results['Returns'].cumsum())
 new_results['Cumulative_Strategy'] = np.exp(new_results['Strategy_Returns'].cumsum())
@@ -244,7 +250,7 @@ for i in range(model.n_components):
     print(f"  Mean Volatility: {model.means_[i][1]:.5f}")
 
 # table of most recent dates and states
-end_date_range = 5
+end_date_range = 10
 print(f"\nMarket: {data_set}")
 print("|--- Date ---|-- State --|---Bull?---|")
 for i in range(0, end_date_range):
@@ -259,7 +265,7 @@ print(f"Today's state: {most_recent_state}")
 print("Probabilities for tomorrow:")
 
 for i in range(0, probs_for_next_state.size):
-    print(f"  State {i}: {probs_for_next_state[i]:.2%}")
+    print(f"  State {i}{" (Bullish)" if i in bull_regimes else ""}: {probs_for_next_state[i]:.2%}")
 
 print(f"Predicted state for {data_set} tomorrow: {next_predicted_state}")
 print(f"Action for {data_set} Tomorrow: {'🚀 BUY BUY BUY' if is_bullish else '💰 SELL SELL SELL'}")

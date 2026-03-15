@@ -32,9 +32,9 @@ data = yf.download(data_set, start=start_date, end=end_date, interval=interval)
 train_size = int(len(data) * 0.70)
 train_data = data[:train_size].copy()
 test_data = data[train_size:].copy()
-# get the initial start and end dates of testing
-test_start = test_data['Close'].iloc[0]
-test_end = test_data['Close'].iloc[-1]
+
+# used for initial model looping
+is_model_training = True
 
 # features that define the "state" of the market
 # using returns and volatility:
@@ -60,50 +60,69 @@ algorithm = "viterbi"
 # "stmc" reinitializes parameters each time 
 init_params = "stmc"
 
-# create model
-model = hmm.GaussianHMM(
-    n_components=n_components, 
-    covariance_type=covariance_type,
-    min_covar=min_covar,
-    n_iter=n_iter, 
-    algorithm=algorithm,
-    init_params=init_params
-)
-model.fit(X)
+# loop the first model until it performs better than the market
+while (is_model_training):
 
-# model estimates which "hidden state" generated the data for each day
-hidden_states = model.predict(X)
+    # create model
+    model = hmm.GaussianHMM(
+        n_components=n_components, 
+        covariance_type=covariance_type,
+        min_covar=min_covar,
+        n_iter=n_iter, 
+        algorithm=algorithm,
+        init_params=init_params
+    )
+    model.fit(X)
 
-# add states back to the dataframe for analysis
-train_data['State'] = hidden_states
+    # model estimates which "hidden state" generated the data for each day
+    hidden_states = model.predict(X)
 
-positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
+    # add states back to the dataframe for analysis
+    train_data['State'] = hidden_states
 
-# use volatility check
-volatility_threshold = 0.070
-low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
+    positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
 
-bull_regimes = []
-for i in positive_return_regimes:
-    if i in low_volatility_regimes:
-        bull_regimes.append(i)
+    # use volatility check
+    volatility_threshold = 0.070
+    low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
 
-train_bull_state_list = []
-# create a signal: 1 if in bullish state, 0 otherwise
-train_data['Signal'] = np.where(train_data['State'].isin(bull_regimes), 1, 0)
+    bull_regimes = []
+    for i in positive_return_regimes:
+        if i in low_volatility_regimes:
+            bull_regimes.append(i)
 
-# calculate returns on HMM and score against benchmark
-# the "strategy" is to trade at the close based on today's state for tomorrow
-train_data['Strategy_Returns'] = train_data['Signal'].shift(1) * train_data['Returns']
+    train_bull_state_list = []
+    # create a signal: 1 if in bullish state, 0 otherwise
+    train_data['Signal'] = np.where(train_data['State'].isin(bull_regimes), 1, 0)
 
-# calculate buy & hold returns
-train_data['Cumulative_Market'] = np.exp(train_data['Returns'].cumsum())
-train_data['Cumulative_Strategy'] = np.exp(train_data['Strategy_Returns'].cumsum())
+    # calculate returns on HMM and score against benchmark
+    # the "strategy" is to trade at the close based on today's state for tomorrow
+    train_data['Strategy_Returns'] = train_data['Signal'].shift(1) * train_data['Returns']
 
-market_final_train = train_data['Cumulative_Market'].iloc[-1]
-strategy_final_train = train_data['Cumulative_Strategy'].iloc[-1]
+    # calculate buy & hold returns
+    train_data['Cumulative_Market'] = np.exp(train_data['Returns'].cumsum())
+    train_data['Cumulative_Strategy'] = np.exp(train_data['Strategy_Returns'].cumsum())
 
-# TODO: use final_train data to test how the model is doing; if it doesn't beat the market, consider looping
+    market_final_train = train_data['Cumulative_Market'].iloc[-1]
+    strategy_final_train = train_data['Cumulative_Strategy'].iloc[-1]
+
+    # test how the model is doing; loop if it doesn't beat the market
+    if strategy_final_train > market_final_train:
+        is_model_training = False
+
+is_model_testing = True
+
+# TODO: loop again with the test data - 
+# this time attempting to check if it's a good prediction
+# get the transitional matrix for the final state
+train_features_final = train_data.iloc[-1:][['Returns', 'Range']].values
+train_prediction_final = model.predict(train_features_final)[0]
+train_transmat_final = model.transmat_[train_prediction_final]
+print(f"Probabilities for next state: {train_transmat_final}")
+# get largest state, to see if first index of new model.predict matches 
+train_predicted_chance_final = train_transmat_final.max()
+train_predicted_state_final = np.where(train_transmat_final == train_predicted_chance_final)[0]
+
 
 # prepare the test features (must be the same columns as training)
 test_data['Returns'] = np.log(test_data['Close'] / test_data['Close'].shift(1))

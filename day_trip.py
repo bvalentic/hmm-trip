@@ -23,7 +23,6 @@ interval = "1d"
 # start_datetime = datetime.date(start_date)
 
 # end_date = start_date + datetime.timedelta(days=end_date_count)
-# print(end_date)
 
 # get data
 data = yf.download(data_set, start=start_date, end=end_date, interval=interval)
@@ -32,6 +31,11 @@ data = yf.download(data_set, start=start_date, end=end_date, interval=interval)
 train_size = int(len(data) * 0.70)
 train_data = data[:train_size].copy()
 test_data = data[train_size:].copy()
+
+# more data
+last_date = test_data.index[-1].strftime("%Y-%m-%d")
+most_recent_date = datetime.today().strftime("%Y-%m-%d")
+new_data = yf.download(data_set, start=last_date) #end=most_recent_date?
 
 # used for initial model looping
 is_model_training = True
@@ -60,8 +64,15 @@ algorithm = "viterbi"
 # "stmc" reinitializes parameters each time 
 init_params = "stmc"
 
+# variables for looping
+model_number = 0
+max_model_count = 16
+model_list = []
+score_list = []
+win_rate_list = []
+
 # loop the first model until it performs better than the market
-while (is_model_training):
+while (model_number < max_model_count):
 
     # create model
     model = hmm.GaussianHMM(
@@ -110,125 +121,155 @@ while (is_model_training):
     if strategy_final_train > market_final_train:
         is_model_training = False
 
-is_model_testing = True
+    # get the transitional matrix for the final state
+    train_features_final = train_data.iloc[-1:][['Returns', 'Range']].values
+    train_prediction_final = model.predict(train_features_final)[0]
+    train_transmat_final = model.transmat_[train_prediction_final]
+    # get largest state, to see if first index of new model.predict matches 
+    train_predicted_chance_final = train_transmat_final.max()
+    train_predicted_state_final = np.where(train_transmat_final == train_predicted_chance_final)[0]
 
-# TODO: loop again with the test data - 
-# this time attempting to check if it's a good prediction
-# get the transitional matrix for the final state
-train_features_final = train_data.iloc[-1:][['Returns', 'Range']].values
-train_prediction_final = model.predict(train_features_final)[0]
-train_transmat_final = model.transmat_[train_prediction_final]
-print(f"Probabilities for next state: {train_transmat_final}")
-# get largest state, to see if first index of new model.predict matches 
-train_predicted_chance_final = train_transmat_final.max()
-train_predicted_state_final = np.where(train_transmat_final == train_predicted_chance_final)[0]
+    # prepare the test features (must be the same columns as training)
+    test_data['Returns'] = np.log(test_data['Close'] / test_data['Close'].shift(1))
+    test_data['Range'] = (test_data['High'] - test_data['Low']) / test_data['Close']
+    test_data.dropna(inplace=True)
+    X_test = test_data[['Returns', 'Range']].values
 
+    # predict uses the existing model parameters to predict the next state
+    test_states = model.predict(X_test)
+    test_data['State'] = test_states
 
-# prepare the test features (must be the same columns as training)
-test_data['Returns'] = np.log(test_data['Close'] / test_data['Close'].shift(1))
-test_data['Range'] = (test_data['High'] - test_data['Low']) / test_data['Close']
-test_data.dropna(inplace=True)
-X_test = test_data[['Returns', 'Range']].values
+    # add to dataframe and calculate returns
+    test_data = test_data.copy() # Avoid SettingWithCopyWarning
+    # reset bull market signal using new data
+    positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
+    low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
+    bull_regimes = []
+    for i in positive_return_regimes:
+        if i in low_volatility_regimes:
+            bull_regimes.append(i)
 
-# predict uses the existing model parameters to predict the next state
-test_states = model.predict(X_test)
-test_data['State'] = test_states
+    test_data['Signal'] = np.where(test_data['State'].isin(bull_regimes), 1, 0)
 
-# add to dataframe and calculate returns
-test_data = test_data.copy() # Avoid SettingWithCopyWarning
-# reset bull market signal using new data
-positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
-low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
-bull_regimes = []
-for i in positive_return_regimes:
-    if i in low_volatility_regimes:
-        bull_regimes.append(i)
+    # calculate returns (shift by 1 to avoid look-ahead bias)
+    test_data['Strategy_Returns'] = test_data['Signal'].shift(1) * test_data['Returns']
 
-test_data['Signal'] = np.where(test_data['State'].isin(bull_regimes), 1, 0)
+    # calculate cumulative growth
+    test_data['Cumulative_Market'] = np.exp(test_data['Returns'].cumsum())
+    test_data['Cumulative_Strategy'] = np.exp(test_data['Strategy_Returns'].cumsum())
 
-# calculate returns (shift by 1 to avoid look-ahead bias)
-test_data['Strategy_Returns'] = test_data['Signal'].shift(1) * test_data['Returns']
+    market_final_test = test_data['Cumulative_Market'].iloc[-1]
+    strategy_final_test = test_data['Cumulative_Strategy'].iloc[-1]
 
-# calculate cumulative growth
-test_data['Cumulative_Market'] = np.exp(test_data['Returns'].cumsum())
-test_data['Cumulative_Strategy'] = np.exp(test_data['Strategy_Returns'].cumsum())
+    # TODO: use (if strategy_final_test > market_final_test:) to determine whether or not to proceed
 
-market_final_test = test_data['Cumulative_Market'].iloc[-1]
-strategy_final_test = test_data['Cumulative_Strategy'].iloc[-1]
+    # next phase - rolling window and walk-forward
 
-# TODO: use (if strategy_final_test > market_final_test:) to determine whether or not to proceed
+    # we'll do a 1-year rolling window for the day-trip
+    # 252 trading days in a year
+    window_size = 252 
 
-# next phase - rolling window and walk-forward
+    # flatten MultiIndex columns if they exist
+    # if isinstance(new_data.columns, pd.MultiIndex):
+    #     new_data.columns = new_data.columns.get_level_values(0)
 
-last_date = test_data.index[-1].strftime("%Y-%m-%d")
-most_recent_date = datetime.today().strftime("%Y-%m-%d")
+    # combine with a bit of old data so the first "new" prediction has a training window
+    # use most recent trading year from old data
 
-new_data = yf.download(data_set, start=last_date) #end=most_recent_date?
+    # drop the old 'Returns' and 'Range' columns from the tail of test_data 
+    # so they don't create NaN columns in the new_data section during concat
+    # then concatenate and remove duplicates (the overlapping last_date)
+    buffer_data = test_data.tail(window_size)[['Open', 'High', 'Low', 'Close', 'Volume']]
+    full_df = pd.concat([buffer_data, new_data])
+    full_df = full_df[~full_df.index.duplicated(keep='last')]
 
-# we'll do a 1-year rolling window for the day-trip
-# 252 trading days in a year
-window_size = 252 
+    full_df['Returns'] = np.log(full_df['Close'] / full_df['Close'].shift(1))
+    full_df['Range'] = (full_df['High'] - full_df['Low']) / full_df['Close']
+    full_df.dropna(inplace=True)
 
-# flatten MultiIndex columns if they exist
-# if isinstance(new_data.columns, pd.MultiIndex):
-#     new_data.columns = new_data.columns.get_level_values(0)
+    # now before rolling window, check the model's prediction
+    # get the transitional matrix for the final state
+    test_features_final = test_data.iloc[-1:][['Returns', 'Range']].values
+    test_prediction_final = model.predict(test_features_final)[0]
+    test_transmat_final = model.transmat_[test_prediction_final]
+    # get largest state, to see if first index of new model.predict matches 
+    test_predicted_chance_final = test_transmat_final.max()
+    test_predicted_state_final = np.where(test_transmat_final == test_predicted_chance_final)[0][0]
 
-# combine with a bit of old data so the first "new" prediction has a training window
-# use most recent trading year from old data
+    run_count = 0
+    signals = []
+    states = []
+    exception_list = []
 
-# drop the old 'Returns' and 'Range' columns from the tail of test_data 
-# so they don't create NaN columns in the new_data section during concat
-# then concatenate and remove duplicates (the overlapping last_date)
-buffer_data = test_data.tail(window_size)[['Open', 'High', 'Low', 'Close', 'Volume']]
-full_df = pd.concat([buffer_data, new_data])
-full_df = full_df[~full_df.index.duplicated(keep='last')]
+    current_predicted_high_chance = test_predicted_chance_final 
+    current_predicted_index = test_predicted_state_final 
+    model_score = 0
+    correct_predictions = 0
 
-full_df['Returns'] = np.log(full_df['Close'] / full_df['Close'].shift(1))
-full_df['Range'] = (full_df['High'] - full_df['Low']) / full_df['Close']
-full_df.dropna(inplace=True)
+    for i in range(window_size, len(full_df)):
+        run_count += 1
+        X_train = full_df.iloc[i-window_size:i][['Returns', 'Range']].values
+        current_features = full_df.iloc[i:i+1][['Returns', 'Range']].values
+        
+        try:
+            model.fit(X_train)
+            current_state = model.predict(current_features)[0]
 
-signals = []
-states = []
-exception_list = []
+            positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
+            low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
+            bull_regimes = []
+            for i in positive_return_regimes:
+                if i in low_volatility_regimes:
+                    bull_regimes.append(i)
 
-for i in range(window_size, len(full_df)):
-    X_train = full_df.iloc[i-window_size:i][['Returns', 'Range']].values
-    current_features = full_df.iloc[i:i+1][['Returns', 'Range']].values
-    
-    try:
-        model.fit(X_train)
-        current_state = model.predict(current_features)[0]
+            signal = 1 if current_state in bull_regimes else 0
 
-        positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
-        low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
-        bull_regimes = []
-        for i in positive_return_regimes:
-            if i in low_volatility_regimes:
-                bull_regimes.append(i)
+            signals.append(signal)
+            states.append(current_state)
 
-        signal = 1 if current_state in bull_regimes else 0
+            if current_state == current_predicted_index:
+                model_score += current_predicted_high_chance
+                correct_predictions += 1
+            else:
+                model_score -= current_predicted_high_chance
+            # set next values to "current"
+            current_transmat = model.transmat_[current_state]
+            current_predicted_high_chance = current_transmat.max()
+            current_predicted_index = np.where(current_transmat == current_predicted_high_chance)[0][0]
 
-        signals.append(signal)
-        states.append(current_state)
-    except Exception as e:
-        # if model fails to converge, use signal from previous day
-        print(f"Exception caught on window {i}! Exception: {e}")
+        except Exception as e:
+            # if model fails to converge, use signal from previous day
+            print(f"Exception caught on window {i}! Exception: {e}")
 
-        signals.append(signals[-1] if signals else 0)
-        states.append(states[-1] if states else 0)
-        exception_list.append(i)
+            signals.append(signals[-1] if signals else 0)
+            states.append(states[-1] if states else 0)
+            exception_list.append(i)
 
-        continue
+            continue
 
-# TODO: if exception_list is above margin of error, build new model (or try new time interval?)
+    # TODO: if exception_list is above margin of error, build new model (or try new time interval?)
+    win_rate = correct_predictions / run_count
+    model_list.append(model)
+    score_list.append(model_score)
+    win_rate_list.append(win_rate)
+    model_number += 1
+
+# determine highest scoring model and use that one
+winning_model_number = np.argmax(score_list)
+winning_model = model_list[winning_model_number]
+model = winning_model
+
+print(f"\nWinning model: {winning_model_number}")
+print(f"High score: {score_list[winning_model_number]:.2f}")
+print(f"High win rate: {win_rate_list[winning_model_number]:.2%}")
 
 # set new bullish states in case they've changed
-positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
-low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
-bull_regimes = []
-for i in positive_return_regimes:
-    if i in low_volatility_regimes:
-        bull_regimes.append(i)
+# positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
+# low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
+# bull_regimes = []
+# for i in positive_return_regimes:
+#     if i in low_volatility_regimes:
+#         bull_regimes.append(i)
 
 # Add the signals to dataframe
 full_results = full_df.copy()
@@ -280,7 +321,7 @@ for i in range(0, end_date_range):
     print(f"| {print_date} |     {print_state}     |    {"Yes" if print_state in bull_regimes else "No "}    |") # formatting
 print("|------------|-----------|-----------|")
 
-print(f"Today's state: {most_recent_state}")
+print(f"\nToday's state: {most_recent_state}")
 print("Probabilities for tomorrow:")
 
 for i in range(0, probs_for_next_state.size):

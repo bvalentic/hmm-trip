@@ -66,7 +66,7 @@ init_params = "stmc"
 
 # variables for looping
 model_number = 0
-max_model_count = 16
+max_model_count = 32
 model_list = []
 score_list = []
 win_rate_list = []
@@ -254,22 +254,22 @@ while (model_number < max_model_count):
     win_rate_list.append(win_rate)
     model_number += 1
 
-# determine highest scoring model and use that one
-winning_model_number = np.argmax(score_list)
+# determine winningest model and use that one
+winning_model_number = np.argmax(win_rate_list)
 winning_model = model_list[winning_model_number]
 model = winning_model
 
 print(f"\nWinning model: {winning_model_number}")
-print(f"High score: {score_list[winning_model_number]:.2f}")
 print(f"High win rate: {win_rate_list[winning_model_number]:.2%}")
+print(f"High score: {score_list[winning_model_number]:.2f}")
 
 # set new bullish states in case they've changed
-# positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
-# low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
-# bull_regimes = []
-# for i in positive_return_regimes:
-#     if i in low_volatility_regimes:
-#         bull_regimes.append(i)
+positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
+low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
+bull_regimes = []
+for i in positive_return_regimes:
+    if i in low_volatility_regimes:
+        bull_regimes.append(i)
 
 # Add the signals to dataframe
 full_results = full_df.copy()

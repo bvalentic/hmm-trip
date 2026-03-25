@@ -6,6 +6,7 @@ import pandas as pd
 import yfinance as yf
 from hmmlearn import hmm
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 # use SPY (S&P 500 ETF) for testing
 data_set = "SPY"
@@ -247,7 +248,6 @@ while (model_number < max_model_count):
 
             continue
 
-    # TODO: if exception_list is above margin of error, build new model (or try new time interval?)
     win_rate = correct_predictions / run_count
     model_list.append(model)
     score_list.append(model_score)
@@ -329,3 +329,12 @@ for i in range(0, probs_for_next_state.size):
 
 print(f"Predicted state for {data_set} tomorrow: {next_predicted_state}")
 print(f"Action for {data_set} Tomorrow: {'🚀 BUY BUY BUY' if is_bullish else '💰 SELL SELL SELL'}")
+
+# plot heatmap of transmat
+plt.imshow(model.transmat_, aspect='auto', cmap='magma')
+plt.title('Generated Transition Matrix')
+plt.xticks([0, 1])
+plt.xlabel('State To')
+plt.yticks([0, 1])
+plt.ylabel('State From')
+plt.show()

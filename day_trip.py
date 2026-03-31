@@ -13,7 +13,7 @@ data_set = "SPY"
 # switch to taking this as an input in a function
 
 start_date = "2020-01-01"
-end_date = "2024-01-01"
+end_date = "2024-04-01"
 
 # for day trip, interval should always be 1 day
 interval = "1d"
@@ -52,9 +52,12 @@ X = train_data[['Returns', 'Range']].values
 
 # number of market regimes
 n_components = 2
-# "full" allows features to correlate within a state
-# "diag" allows features to be modeled w/o diagonal correlation
-covariance_type = "diag"
+# "spherical" - each state uses a single variance value that applies to all features (default)
+# "diag" - each state uses a diagonal covariance matrix
+# "full" - each state uses a full (i.e. unrestricted) covariance matrix
+# (originally said it 'allows features to correlate within a state')
+# "tied" - all states use the same full covariance matrix
+covariance_type = "full"
 # number of model iterations
 n_iter = 100
 # add min_covar to prevent "non-positive definite" error
@@ -72,7 +75,8 @@ model_list = []
 score_list = []
 win_rate_list = []
 
-# loop the first model until it performs better than the market
+# loop the model and select the one with the best win rate
+# score is used as a comparison, but win % is the most important
 while (model_number < max_model_count):
 
     # create model
@@ -289,6 +293,7 @@ strategy_final = new_results['Cumulative_Strategy'].iloc[-1]
 # use iloc[-1:] to get the latest data point
 most_recent_features = new_results.iloc[-1:][['Returns', 'Range']].values
 most_recent_state = model.predict(most_recent_features)[0]
+# most_recent_state = model.predict(most_recent_features)[-1]
 
 # access the transition matrix
 # a matrix of [Current State, Next State] probabilities
@@ -319,9 +324,10 @@ for i in range(0, end_date_range):
     print_date = new_results.index[-index].strftime("%Y-%m-%d")
     print_state = new_results['State'].iloc[-index]
     print(f"| {print_date} |     {print_state}     |    {"Yes" if print_state in bull_regimes else "No "}    |") # formatting
-print("|------------|-----------|-----------|")
+print("|------------|-----------|-----------|\n")
 
-print(f"\nToday's state: {most_recent_state}")
+print(f"Most recent date used: {new_results.index[-1].strftime("%Y-%m-%d")}")
+print(f"Model prediction of most recent state: {most_recent_state}")
 print("Probabilities for tomorrow:")
 
 for i in range(0, probs_for_next_state.size):
@@ -331,7 +337,7 @@ print(f"Predicted state for {data_set} tomorrow: {next_predicted_state}")
 print(f"Action for {data_set} Tomorrow: {'🚀 BUY BUY BUY' if is_bullish else '💰 SELL SELL SELL'}")
 
 # plot heatmap of transmat
-plt.imshow(model.transmat_, aspect='auto', cmap='magma')
+plt.imshow(transition_matrix, aspect='auto', cmap='magma')
 plt.title('Generated Transition Matrix')
 plt.xticks([0, 1])
 plt.xlabel('State To')

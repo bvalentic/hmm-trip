@@ -7,6 +7,7 @@ import yfinance as yf
 from hmmlearn import hmm
 from datetime import datetime
 import matplotlib.pyplot as plt
+import trip_guess as guess
 
 # use SPY (S&P 500 ETF) for testing
 data_set = "SPY"
@@ -74,6 +75,7 @@ max_model_count = 32
 model_list = []
 score_list = []
 win_rate_list = []
+signals_and_states = []
 
 # loop the model and select the one with the best win rate
 # score is used as a comparison, but win % is the most important
@@ -256,12 +258,15 @@ while (model_number < max_model_count):
     model_list.append(model)
     score_list.append(model_score)
     win_rate_list.append(win_rate)
+    signals_and_states.append((signals, states))
     model_number += 1
 
 # determine winningest model and use that one
 winning_model_number = np.argmax(win_rate_list)
 winning_model = model_list[winning_model_number]
 model = winning_model
+signals = signals_and_states[winning_model_number][0]
+states = signals_and_states[winning_model_number][1]
 
 print(f"\nWinning model: {winning_model_number}")
 print(f"High win rate: {win_rate_list[winning_model_number]:.2%}")
@@ -275,19 +280,32 @@ for i in positive_return_regimes:
     if i in low_volatility_regimes:
         bull_regimes.append(i)
 
-# Add the signals to dataframe
+# Add the signals and states to dataframe
 full_results = full_df.copy()
 new_results = full_results[window_size:]
 new_results['Signal'] = signals
 new_results['State'] = states
 
-# TODO: keep or remove? These aren't being used, but could be to do a final test
-new_results['Strategy_Returns'] = new_results['Signal'].shift(1) * new_results['Returns']
-new_results['Cumulative_Market'] = np.exp(new_results['Returns'].cumsum())
-new_results['Cumulative_Strategy'] = np.exp(new_results['Strategy_Returns'].cumsum())
+# try Monte Carlo guessing method and see what the best guess is
 
-market_final = new_results['Cumulative_Market'].iloc[-1]
-strategy_final = new_results['Cumulative_Strategy'].iloc[-1]
+# function returns winning (sim, guesses, guess_score, win_rate)
+guess_tuples = guess.guess_mc(states, max_model_count * 100, n_components)
+
+print(f"\nWinning guess model: {guess_tuples[0]}")
+print(f"Winning guess rate: {guess_tuples[3]:.2%}")
+print(f"Winning guess score: {guess_tuples[2]}")
+
+# table of most recent dates and best guesses
+end_date_range = 10
+print("\nBest Guess List:")
+print("|--- Date ---|-- State --|---Bull?---|")
+for i in range(0, end_date_range):
+    # reverse index to go in order of dates, from -10 to -1
+    index = end_date_range - i
+    print_date = new_results.index[-index].strftime("%Y-%m-%d")
+    print_state = guess_tuples[1][-index]
+    print(f"| {print_date} |     {print_state}     |    {"Yes" if print_state in bull_regimes else "No "}    |") # formatting
+print("|------------|-----------|-----------|\n")
 
 # get the state for most recent time interval
 # use iloc[-1:] to get the latest data point

@@ -6,6 +6,7 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 from hmmlearn import hmm
 from datetime import datetime
+import trip_guess
 
 # use SPY (S&P 500 ETF) for testing
 data_set = "SPY"
@@ -42,7 +43,7 @@ train_data.dropna(inplace=True)
 X = train_data[['Returns', 'Range']].values
 
 # number of market regimes
-n_components = 4
+n_components = 2
 # "full" allows features to correlate within a state
 # "diag" allows features to be modeled w/o diagonal correlation
 covariance_type = "diag"
@@ -214,6 +215,19 @@ new_results['Cumulative_Strategy'] = np.exp(new_results['Strategy_Returns'].cums
 
 market_final = new_results['Cumulative_Market'].iloc[-1]
 strategy_final = new_results['Cumulative_Strategy'].iloc[-1]
+
+# get "control group" of random guesses
+new_results_guesses = trip_guess.guess_list(signals, n_components)
+new_results['Guesses'] = new_results_guesses
+
+# compare with signal
+guess_score = 0
+for item in range(len(signals)):
+    if signals[item] == new_results_guesses[item]:
+        guess_score += 1
+win_rate = guess_score / len(signals)
+
+print(f"Guessing win rate: {win_rate}")
 
 # get the state for most recent time interval
 # use iloc[-1:] to get the latest data point

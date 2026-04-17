@@ -158,18 +158,6 @@ while (model_number < max_model_count):
 
     test_data['Signal'] = np.where(test_data['State'].isin(bull_regimes), 1, 0)
 
-    # calculate returns (shift by 1 to avoid look-ahead bias)
-    test_data['Strategy_Returns'] = test_data['Signal'].shift(1) * test_data['Returns']
-
-    # calculate cumulative growth
-    test_data['Cumulative_Market'] = np.exp(test_data['Returns'].cumsum())
-    test_data['Cumulative_Strategy'] = np.exp(test_data['Strategy_Returns'].cumsum())
-
-    market_final_test = test_data['Cumulative_Market'].iloc[-1]
-    strategy_final_test = test_data['Cumulative_Strategy'].iloc[-1]
-
-    # TODO: use (if strategy_final_test > market_final_test:) to determine whether or not to proceed
-
     # next phase - rolling window and walk-forward
 
     # we'll do a 1-year rolling window for the day-trip
@@ -289,23 +277,11 @@ new_results['State'] = states
 # try Monte Carlo guessing method and see what the best guess is
 
 # function returns winning (sim, guesses, guess_score, win_rate)
-guess_tuples = guess.guess_mc(states, max_model_count * 100, n_components)
+guess_tuples = guess.guess_mc(states, max_model_count * 10, n_components)
 
 print(f"\nWinning guess model: {guess_tuples[0]}")
 print(f"Winning guess rate: {guess_tuples[3]:.2%}")
 print(f"Winning guess score: {guess_tuples[2]}")
-
-# table of most recent dates and best guesses
-end_date_range = 10
-print("\nBest Guess List:")
-print("|--- Date ---|-- State --|---Bull?---|")
-for i in range(0, end_date_range):
-    # reverse index to go in order of dates, from -10 to -1
-    index = end_date_range - i
-    print_date = new_results.index[-index].strftime("%Y-%m-%d")
-    print_state = guess_tuples[1][-index]
-    print(f"| {print_date} |     {print_state}     |    {"Yes" if print_state in bull_regimes else "No "}    |") # formatting
-print("|------------|-----------|-----------|\n")
 
 # get the state for most recent time interval
 # use iloc[-1:] to get the latest data point

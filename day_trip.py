@@ -8,6 +8,7 @@ from hmmlearn import hmm
 from datetime import datetime
 import matplotlib.pyplot as plt
 import trip_guess as guess
+import time
 
 # use SPY (S&P 500 ETF) for testing
 data_set = "SPY"
@@ -38,9 +39,6 @@ test_data = data[train_size:].copy()
 last_date = test_data.index[-1].strftime("%Y-%m-%d")
 most_recent_date = datetime.today().strftime("%Y-%m-%d")
 new_data = yf.download(data_set, start=last_date) #end=most_recent_date?
-
-# used for initial model looping
-is_model_training = True
 
 # features that define the "state" of the market
 # using returns and volatility:
@@ -76,6 +74,9 @@ model_list = []
 score_list = []
 win_rate_list = []
 signals_and_states = []
+
+# before loop, start time
+start = time.time()
 
 # loop the model and select the one with the best win rate
 # score is used as a comparison, but win % is the most important
@@ -113,21 +114,6 @@ while (model_number < max_model_count):
     # create a signal: 1 if in bullish state, 0 otherwise
     train_data['Signal'] = np.where(train_data['State'].isin(bull_regimes), 1, 0)
 
-    # calculate returns on HMM and score against benchmark
-    # the "strategy" is to trade at the close based on today's state for tomorrow
-    train_data['Strategy_Returns'] = train_data['Signal'].shift(1) * train_data['Returns']
-
-    # calculate buy & hold returns
-    train_data['Cumulative_Market'] = np.exp(train_data['Returns'].cumsum())
-    train_data['Cumulative_Strategy'] = np.exp(train_data['Strategy_Returns'].cumsum())
-
-    market_final_train = train_data['Cumulative_Market'].iloc[-1]
-    strategy_final_train = train_data['Cumulative_Strategy'].iloc[-1]
-
-    # test how the model is doing; loop if it doesn't beat the market
-    if strategy_final_train > market_final_train:
-        is_model_training = False
-
     # get the transitional matrix for the final state
     train_features_final = train_data.iloc[-1:][['Returns', 'Range']].values
     train_prediction_final = model.predict(train_features_final)[0]
@@ -159,6 +145,10 @@ while (model_number < max_model_count):
     test_data['Signal'] = np.where(test_data['State'].isin(bull_regimes), 1, 0)
 
     # next phase - rolling window and walk-forward
+    # roll up to present day; 
+    # guess latest regime for most recent market close; 
+    # compare with actual results for a final test.
+    # then apply model to the next day?
 
     # we'll do a 1-year rolling window for the day-trip
     # 252 trading days in a year
@@ -196,6 +186,7 @@ while (model_number < max_model_count):
     states = []
     exception_list = []
 
+    # use prediction from test data
     current_predicted_high_chance = test_predicted_chance_final 
     current_predicted_index = test_predicted_state_final 
     model_score = 0
@@ -213,15 +204,16 @@ while (model_number < max_model_count):
             positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
             low_volatility_regimes = np.where(model.means_[:, 1] < volatility_threshold)[0]
             bull_regimes = []
-            for i in positive_return_regimes:
-                if i in low_volatility_regimes:
-                    bull_regimes.append(i)
+            for regime in positive_return_regimes:
+                if regime in low_volatility_regimes:
+                    bull_regimes.append(regime)
 
             signal = 1 if current_state in bull_regimes else 0
-
             signals.append(signal)
             states.append(current_state)
 
+            # "score" model based on whether or not prediction is correct
+            # using percentage like a 0-100 confidence scale
             if current_state == current_predicted_index:
                 model_score += current_predicted_high_chance
                 correct_predictions += 1
@@ -239,7 +231,6 @@ while (model_number < max_model_count):
             signals.append(signals[-1] if signals else 0)
             states.append(states[-1] if states else 0)
             exception_list.append(i)
-
             continue
 
     win_rate = correct_predictions / run_count
@@ -247,7 +238,11 @@ while (model_number < max_model_count):
     score_list.append(model_score)
     win_rate_list.append(win_rate)
     signals_and_states.append((signals, states))
+
+    # add model number and continue loop
     model_number += 1
+
+end = time.time()
 
 # determine winningest model and use that one
 winning_model_number = np.argmax(win_rate_list)
@@ -256,9 +251,11 @@ model = winning_model
 signals = signals_and_states[winning_model_number][0]
 states = signals_and_states[winning_model_number][1]
 
+print(f"\nRun time: {end - start:.2f}s")
+
 print(f"\nWinning model: {winning_model_number}")
-print(f"High win rate: {win_rate_list[winning_model_number]:.2%}")
 print(f"High score: {score_list[winning_model_number]:.2f}")
+print(f"High win rate: {win_rate_list[winning_model_number]:.2%}")
 
 # set new bullish states in case they've changed
 positive_return_regimes = np.where(model.means_[:, 0] > 0)[0]
@@ -331,7 +328,7 @@ print(f"Predicted state for {data_set} tomorrow: {next_predicted_state}")
 print(f"Action for {data_set} Tomorrow: {'🚀 BUY BUY BUY' if is_bullish else '💰 SELL SELL SELL'}")
 
 # plot heatmap of transmat
-plt.imshow(transition_matrix, aspect='auto', cmap='magma')
+plt.imshow(transition_matrix, aspect='auto', cmap='YlOrRd')
 plt.title('Generated Transition Matrix')
 plt.xticks([0, 1])
 plt.xlabel('State To')
